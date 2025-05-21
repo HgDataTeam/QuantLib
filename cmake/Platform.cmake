@@ -38,3 +38,12 @@ if (MSVC)
         add_compile_definitions(_SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING)
     endif()
 endif()
+
+# Configure OpenMP
+if (QL_ENABLE_OPENMP)
+    if (OpenMP_CXX_FOUND)
+        add_compile_definitions(QL_ENABLE_OPENMP)
+        # Add OpenMP flags to the compilation options
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    endif()
+endif()
