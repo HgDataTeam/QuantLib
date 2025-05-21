@@ -36,6 +36,10 @@
 #include <ql/termstructures/volatility/sabr.hpp>
 #include <utility>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using namespace QuantLib;
 using namespace boost::unit_test_framework;
 
@@ -65,38 +69,113 @@ class SabrMonteCarloPricer {
         const Real w = std::sqrt(1.0-rho_*rho_);
 
         const Real logAlpha = std::log(alpha_);
-
-        SobolBrownianBridgeRsg rsg(2, timeSteps, SobolBrownianGenerator::Diagonal, 12345U);
+        const Real nuDt = - 0.5*nu_*nu_*dt;
+        const Real nuSqrtDt = nu_*sqrtDt;
 
         GeneralStatistics stats;
 
+        // Pre-allocate a vector for all path values
+        std::vector<Real> pathValues(nSims);
+
+        // Special case for beta = 1.0 (Black-Scholes case) to avoid pow() calls
+        const bool isBlackScholesCase = std::abs(beta_ - 1.0) < 1e-10;
+
+        #ifdef _OPENMP
+        // Process paths in parallel using OpenMP
+        #pragma omp parallel
+        {
+            // Each thread has its own random number generator
+            SobolBrownianBridgeRsg localRsg(2, timeSteps, SobolBrownianGenerator::Diagonal, 
+                                           12345U + static_cast<unsigned long>(omp_get_thread_num()));
+            
+            // Each thread processes a portion of the paths
+            #pragma omp for
+            for (Size i=0; i < nSims; ++i) {
+                Real f = f0_;
+                Real a = logAlpha;
+                
+                const std::vector<Real>& n = localRsg.nextSequence().value;
+                
+                // Cache expensive calculations
+                Real expA;
+                
+                for (Size j=0; j < timeSteps && f > 0.0; ++j) {
+                    const Real r1 = n[j];
+                    const Real r2 = rho_*r1 + n[j+timeSteps]*w;
+
+                    // Cache the exponentiation which is costly
+                    expA = std::exp(a);
+                    
+                    // Specialized case for beta = 1.0 to avoid pow() call
+                    if (isBlackScholesCase) {
+                        f += expA * f * r1 * sqrtDt;
+                    } else {
+                        f += expA * std::pow(f, beta_) * r1 * sqrtDt;
+                    }
+                    
+                    a += nuDt + nuSqrtDt * r2;
+                }
+                
+                f = std::max(0.0, f);
+                pathValues[i] = (*payoff_)(f);
+            }
+        }
+        #else
+        // Single-threaded version
+        SobolBrownianBridgeRsg rsg(2, timeSteps, SobolBrownianGenerator::Diagonal, 12345U);
+        
         for (Size i=0; i < nSims; ++i) {
             Real f = f0_;
             Real a = logAlpha;
-
-            const std::vector<Real> n = rsg.nextSequence().value;
-
+            
+            const std::vector<Real>& n = rsg.nextSequence().value;
+            
+            // Cache expensive calculations
+            Real expA;
+            
             for (Size j=0; j < timeSteps && f > 0.0; ++j) {
-
                 const Real r1 = n[j];
                 const Real r2 = rho_*r1 + n[j+timeSteps]*w;
 
-                //Sample CEV distribution: accurate but slow
-                //
-                //const CEVRNDCalculator calc(f, std::exp(a), beta_);
-                //const Real u = CumulativeNormalDistribution()(r1);
-                //f = calc.invcdf(u, dt);
-
-                // simple Euler method
-                f += std::exp(a)*std::pow(f, beta_)*r1*sqrtDt;
-                a += - 0.5*nu_*nu_*dt + nu_*r2*sqrtDt;
+                // Cache the exponentiation
+                expA = std::exp(a);
+                
+                // Specialized case for beta = 1.0 to avoid pow() call
+                if (isBlackScholesCase) {
+                    f += expA * f * r1 * sqrtDt;
+                } else {
+                    f += expA * std::pow(f, beta_) * r1 * sqrtDt;
+                }
+                
+                a += nuDt + nuSqrtDt * r2;
             }
+            
             f = std::max(0.0, f);
-            stats.add((*payoff_)(f));
+            pathValues[i] = (*payoff_)(f);
+        }
+        #endif
+
+        // Add all path values to statistics
+        for (Size i = 0; i < nSims; ++i) {
+            stats.add(pathValues[i]);
         }
 
         return stats.mean();
     }
+
+  private:
+    const Real f0_;
+    const Time maturity_;
+    const ext::shared_ptr<Payoff> payoff_;
+    const Real alpha_, beta_, nu_, rho_;
+};
+
+  private:
+    const Real f0_;
+    const Time maturity_;
+    const ext::shared_ptr<Payoff> payoff_;
+    const Real alpha_, beta_, nu_, rho_;
+};
 
   private:
     const Real f0_;
