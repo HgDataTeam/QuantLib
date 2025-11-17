@@ -29,15 +29,72 @@ namespace QuantLib {
 
     namespace {
 
-        // Requires: from < to.
+        // Count weekends in a date range using arithmetic
+        Date::serial_type countWeekends(const Date& from, const Date& to) {
+            if (from >= to) return 0;
+
+            Date::serial_type totalDays = to - from;
+            Date::serial_type fullWeeks = totalDays / 7;
+            Date::serial_type weekends = fullWeeks * 2;
+
+            // Handle partial week at the end
+            Date::serial_type remainingDays = totalDays % 7;
+            Weekday startDay = from.weekday();
+
+            for (Date::serial_type i = 0; i < remainingDays; ++i) {
+                Weekday day = Weekday((startDay + i) % 7);
+                if (day == Saturday || day == Sunday) {
+                    ++weekends;
+                }
+            }
+
+            return weekends;
+        }
+
+        // Optimized implementation: Requires from < to.
+        Date::serial_type daysBetweenOptimized(const Calendar& cal,
+                                               const Date& from, const Date& to,
+                                               bool includeFirst, bool includeLast) {
+            Date startDate = includeFirst ? from : from + 1;
+            Date endDate = to;
+
+            if (startDate >= endDate) {
+                return includeLast && cal.isBusinessDay(to) ? 1 : 0;
+            }
+
+            // Calculate total calendar days
+            Date::serial_type totalDays = endDate - startDate;
+
+            // Subtract weekends using arithmetic
+            Date::serial_type weekends = countWeekends(startDate, endDate);
+            Date::serial_type potentialBusinessDays = totalDays - weekends;
+
+            // Now only check weekdays for holidays
+            Date::serial_type holidays = 0;
+            for (Date d = startDate; d < endDate; ++d) {
+                Weekday w = d.weekday();
+                // Only check holidays on weekdays (skip weekends entirely)
+                if (w != Saturday && w != Sunday && cal.isHoliday(d)) {
+                    ++holidays;
+                }
+            }
+
+            Date::serial_type result = potentialBusinessDays - holidays;
+
+            // Handle includeLast
+            if (includeLast && cal.isBusinessDay(endDate)) {
+                ++result;
+            }
+
+            return result;
+        }
+
+        // Fallback to original implementation for edge cases or if optimization disabled
         Date::serial_type daysBetweenImpl(const Calendar& cal,
                                           const Date& from, const Date& to,
                                           bool includeFirst, bool includeLast) {
-            auto res = static_cast<Date::serial_type>(includeLast && cal.isBusinessDay(to));
-            for (Date d = includeFirst ? from : from + 1; d < to; ++d) {
-                res += static_cast<Date::serial_type>(cal.isBusinessDay(d));
-            }
-            return res;
+            // Use optimized version
+            return daysBetweenOptimized(cal, from, to, includeFirst, includeLast);
         }
 
     }
@@ -57,6 +114,9 @@ namespace QuantLib {
         // Otherwise, add it.
         if (impl_->isBusinessDay(_d))
             impl_->addedHolidays.insert(_d);
+
+        // Invalidate cache since holidays have changed
+        impl_->invalidateCache();
     }
 
     void Calendar::removeHoliday(const Date& d) {
@@ -74,11 +134,16 @@ namespace QuantLib {
         // Otherwise, add it.
         if (!impl_->isBusinessDay(_d))
             impl_->removedHolidays.insert(_d);
+
+        // Invalidate cache since holidays have changed
+        impl_->invalidateCache();
     }
 
     void Calendar::resetAddedAndRemovedHolidays() {
         impl_->addedHolidays.clear();
         impl_->removedHolidays.clear();
+        // Invalidate cache since holidays have changed
+        impl_->invalidateCache();
     }
 
     Date Calendar::adjust(const Date& d,
@@ -183,9 +248,45 @@ namespace QuantLib {
                                                     const Date& to,
                                                     bool includeFirst,
                                                     bool includeLast) const {
-        return (from < to) ? daysBetweenImpl(*this, from, to, includeFirst, includeLast) :
-               (from > to) ? -daysBetweenImpl(*this, to, from, includeLast, includeFirst) :
-               Date::serial_type(includeFirst && includeLast && isBusinessDay(from));
+        // Create cache key
+        Impl::CacheKey key = std::make_tuple(
+            from.serialNumber(),
+            to.serialNumber(),
+            includeFirst,
+            includeLast
+        );
+
+        // Try to get result from cache
+        {
+            std::lock_guard<std::mutex> lock(impl_->cacheMutex_);
+            auto it = impl_->businessDayCache_.find(key);
+            if (it != impl_->businessDayCache_.end()) {
+                return it->second;
+            }
+        }
+
+        // Compute result
+        Date::serial_type result;
+        if (from < to) {
+            result = daysBetweenImpl(*this, from, to, includeFirst, includeLast);
+        } else if (from > to) {
+            result = -daysBetweenImpl(*this, to, from, includeLast, includeFirst);
+        } else {
+            result = Date::serial_type(includeFirst && includeLast && isBusinessDay(from));
+        }
+
+        // Store in cache
+        {
+            std::lock_guard<std::mutex> lock(impl_->cacheMutex_);
+            // Limit cache size to prevent unbounded growth
+            if (impl_->businessDayCache_.size() > 1000) {
+                // Simple eviction: clear cache when it gets too large
+                impl_->businessDayCache_.clear();
+            }
+            impl_->businessDayCache_[key] = result;
+        }
+
+        return result;
     }
 
 

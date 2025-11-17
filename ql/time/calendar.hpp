@@ -35,6 +35,9 @@
 #include <set>
 #include <vector>
 #include <string>
+#include <map>
+#include <mutex>
+#include <tuple>
 
 namespace QuantLib {
 
@@ -68,6 +71,18 @@ namespace QuantLib {
             virtual bool isBusinessDay(const Date&) const = 0;
             virtual bool isWeekend(Weekday) const = 0;
             std::set<Date> addedHolidays, removedHolidays;
+
+            // Thread-safe cache for businessDaysBetween queries
+            // Cache key: (from, to, includeFirst, includeLast)
+            using CacheKey = std::tuple<Date::serial_type, Date::serial_type, bool, bool>;
+            mutable std::map<CacheKey, Date::serial_type> businessDayCache_;
+            mutable std::mutex cacheMutex_;
+
+            // Clear cache when holidays are modified
+            void invalidateCache() const {
+                std::lock_guard<std::mutex> lock(cacheMutex_);
+                businessDayCache_.clear();
+            }
         };
         ext::shared_ptr<Impl> impl_;
       public:
