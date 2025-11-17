@@ -85,7 +85,7 @@ namespace QuantLib {
             } else {
                 d1_ = std::log(forward_/strike_)/stdDev_ + 0.5*stdDev_;
                 d2_ = d1_-stdDev_;
-                CumulativeNormalDistribution f;
+                static const CumulativeNormalDistribution f;
                 cum_d1_ = f(d1_);
                 cum_d2_ = f(d2_);
                 n_d1_ = f.derivative(d1_);

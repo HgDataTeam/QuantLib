@@ -83,7 +83,7 @@ namespace QuantLib {
 
         Real d1 = std::log(forward/strike)/stdDev + 0.5*stdDev;
         Real d2 = d1 - stdDev;
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         Real nd1 = phi(sign * d1);
         Real nd2 = phi(sign * d2);
         Real result = discount * sign * (forward*nd1 - strike*nd2);
@@ -130,7 +130,7 @@ namespace QuantLib {
             return (optionType == Option::Call ? discount : 0.0);
 
         Real d1 = std::log(forward/strike)/stdDev + 0.5*stdDev;
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         return sign * phi(sign * d1) * discount;
     }
 
@@ -576,7 +576,7 @@ namespace QuantLib {
         if (strike==0.0)
             return (optionType == Option::Call ? 1.0 : 0.0);
         Real d2 = std::log(forward/strike)/stdDev - 0.5*stdDev;
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         return phi(sign * d2);
     }
 
@@ -607,7 +607,7 @@ namespace QuantLib {
         if (strike == 0.0)
             return (optionType == Option::Call ? 1.0 : 0.0);
         Real d1 = std::log(forward/strike)/stdDev + 0.5*stdDev;
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         return phi(sign * d1);
     }
 
@@ -714,7 +714,7 @@ namespace QuantLib {
         Real d = (forward-strike) * Integer(optionType), h = d / stdDev;
         if (stdDev==0.0)
             return discount*std::max(d, 0.0);
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         Real result = discount*(stdDev*phi.derivative(h) + d*phi(h));
         QL_ENSURE(result>=0.0,
                   "negative value (" << result << ") for " <<
@@ -745,7 +745,7 @@ namespace QuantLib {
         if (stdDev == 0.0)
             return sign * std::max(1.0 * boost::math::sign((forward - strike) * sign), 0.0) * discount;
         Real d = (forward - strike) * sign, h = d / stdDev;
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         return sign * phi(h) * discount;
     }
 
@@ -871,7 +871,7 @@ namespace QuantLib {
         Real d = (forward - strike) * Integer(optionType), h = d / stdDev;
         if (stdDev==0.0)
             return std::max(d, 0.0);
-        CumulativeNormalDistribution phi;
+        static const CumulativeNormalDistribution phi;
         Real result = phi(h);
         return result;
     }
